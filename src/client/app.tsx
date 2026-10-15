@@ -1,127 +1,117 @@
-import { EditorContext } from "./context";
-import { useCanvasState } from "./hooks/use-canvas";
-import { useDesigns } from "./hooks/use-designs";
-import { useBrandKits } from "./hooks/use-brand-kits";
-import { useRouter } from "./hooks/use-router";
-import { Editor } from "./components/editor";
-import { Home } from "./components/home";
-import { useFonts } from "./fonts";
-import { AppNav, embedded, reportLocation } from "@clawnify/app/client";
-import { useEffect, useRef } from "preact/hooks";
+// Mock API implementation using localStorage for static hosting (Cloudflare Pages)
 
-export function App() {
-  const { path, navigate, designId } = useRouter();
-  const saveSchedulerRef = useRef<() => void>(() => {});
-  const canvasState = useCanvasState(() => saveSchedulerRef.current());
-  const designState = useDesigns(canvasState.getCanvasJSONForPage, canvasState.getCanvasSize);
-  saveSchedulerRef.current = designState.scheduleSave;
-  const brandState = useBrandKits();
-  const fontState = useFonts();
+export async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const STORAGE_KEY_DESIGNS = "sinhhai_designs";
+  const STORAGE_KEY_TEMPLATES = "sinhhai_templates";
+  const STORAGE_KEY_FONTS = "sinhhai_fonts";
+  const STORAGE_KEY_BRANDS = "sinhhai_brands";
 
-  // In the Clawnify dashboard the open screen lives in the host URL, so a
-  // reload comes back to the same design.
-  useEffect(() => {
-    reportLocation(path);
-  }, [path]);
-
-  // Load design from URL on initial load and when designId changes
-  useEffect(() => {
-    if (designId && !designState.loading && designState.loadedDesignId !== designId) {
-      designState.loadDesign(designId);
-    }
-  }, [designId, designState.loading, designState.loadedDesignId]);
-
-  // Adopt a design's own frame when it is opened. Keyed on the design id, not
-  // the object: saving replaces activeDesign, and re-running then would snap
-  // the canvas back to the stored size mid-edit, undoing a resize.
-  const framedDesignIdRef = useRef<string | null>(null);
-  useEffect(() => {
-    const design = designState.activeDesign;
-    if (!design || framedDesignIdRef.current === design.id) return;
-    framedDesignIdRef.current = design.id;
-    if (design.width && design.height) {
-      canvasState.setCanvasSize(design.width, design.height, { reflow: false });
-    }
-  }, [designState.activeDesign]);
-
-  // Auto-activate first page when pages load and canvases are registered
-  useEffect(() => {
-    if (designState.pages.length > 0 && !canvasState.activeCanvasId) {
-      canvasState.setActiveCanvas(designState.pages[0].id);
-    }
-  }, [designState.pages, canvasState.activeCanvasId]);
-
-  const hostNav = embedded ? (
-    <AppNav
-      title="Design"
-      icon="image"
-      active={designId ?? "home"}
-      groups={[
-        { items: [{ id: "home", label: "Designs", icon: "layout-grid", href: "/", home: true }] },
-        {
-          label: "Recent designs",
-          items: designState.designs.map((d) => ({ id: d.id, label: d.name, icon: "image", href: `/design/${d.id}` })),
-        },
-      ]}
-      onNavigate={(item) => item.href && navigate(item.href)}
-    />
-  ) : null;
-
-  if (fontState.fontsError) {
-    return <div class="flex flex-col items-center justify-center gap-3 h-full" role="alert">
-      <p>{fontState.fontsError}</p>
-      <button class="px-3 py-2 border rounded cursor-pointer" onClick={() => window.location.reload()}>Reload</button>
-    </div>;
+  // Khởi tạo dữ liệu mẫu nếu chưa có
+  if (!localStorage.getItem(STORAGE_KEY_TEMPLATES)) {
+    const defaultTemplates = [
+      {
+        id: "1",
+        name: "Social Media Post",
+        category: "Social",
+        width: 1080,
+        height: 1080,
+        canvas_json: JSON.stringify({ version: "6.0.0", objects: [] }),
+        thumbnail_url: "",
+        sort_order: 1
+      }
+    ];
+    localStorage.setItem(STORAGE_KEY_TEMPLATES, JSON.stringify(defaultTemplates));
   }
 
-  // Fabric measures text during construction. Load fonts before mounting any canvas.
-  if (designState.loading || fontState.fontsLoading) {
-    return (
-      <>
-      {hostNav}
-      <div class="flex items-center justify-center h-full bg-[#F3F4F7]">
-        <div class="text-center">
-          <div class="spinner !w-6 !h-6 !border-accent/30 !border-t-accent mb-3 mx-auto" />
-          <p class="text-zinc-400 text-sm">Loading...</p>
-        </div>
-      </div>
-      </>
-    );
+  if (!localStorage.getItem(STORAGE_KEY_DESIGNS)) {
+    localStorage.setItem(STORAGE_KEY_DESIGNS, JSON.stringify([]));
   }
 
-  // Home / gallery view
-  if (!designId) {
-    return (
-      <>
-      {hostNav}
-      <Home
-        designs={designState.designs}
-        templates={designState.templates}
-        navigate={navigate}
-        createDesign={designState.createDesign}
-        deleteDesign={designState.deleteDesign}
-        renameDesign={designState.renameDesign}
-        createFromTemplate={designState.createFromTemplate}
-      />
-      </>
-    );
+  // Xử lý các endpoint GET
+  if (method === "GET") {
+    if (path === "/api/designs" || path.startsWith("/api/designs?")) {
+      const data = JSON.parse(localStorage.getItem(STORAGE_KEY_DESIGNS) || "[]");
+      return data as unknown as T;
+    }
+    if (path === "/api/templates" || path.startsWith("/api/templates?")) {
+      const data = JSON.parse(localStorage.getItem(STORAGE_KEY_TEMPLATES) || "[]");
+      return data as unknown as T;
+    }
+    if (path === "/api/fonts") {
+      const data = JSON.parse(localStorage.getItem(STORAGE_KEY_FONTS) || "[]");
+      return data as unknown as T;
+    }
+    if (path === "/api/brand-kits") {
+      const data = JSON.parse(localStorage.getItem(STORAGE_KEY_BRANDS) || "[]");
+      return data as unknown as T;
+    }
+    if (path.match(/^\/api\/designs\/[^/]+$/)) {
+      const id = path.split("/")[3];
+      const designs = JSON.parse(localStorage.getItem(STORAGE_KEY_DESIGNS) || "[]");
+      const design = designs.find((d: any) => d.id === id);
+      if (!design) {
+        throw new Error("Design not found");
+      }
+      return design as unknown as T;
+    }
+    if (path.match(/^\/api\/designs\/[^/]+\/fields$/)) {
+      return [] as unknown as T;
+    }
   }
 
-  // Editor view
-  const contextValue = {
-    ...canvasState,
-    ...designState,
-    ...brandState,
-    ...fontState,
-    // activeCanvasId is the source of truth for which page is active
-    activePageId: canvasState.activeCanvasId ?? designState.activePageId,
-    navigate,
-  };
+  // Xử lý các endpoint POST
+  if (method === "POST") {
+    if (path === "/api/designs") {
+      const designs = JSON.parse(localStorage.getItem(STORAGE_KEY_DESIGNS) || "[]");
+      const payload = body as any;
+      const newDesign = {
+        id: "d_" + Math.random().toString(36.substring(2, 9)),
+        name: payload.name || "Untitled Design",
+        width: payload.width || 1080,
+        height: payload.height || 1080,
+        canvas_json: payload.canvas_json || JSON.stringify({ version: "6.0.0", objects: [] }),
+        thumbnail_url: "",
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        pages: [{ id: "p_1", canvas_json: JSON.stringify({ version: "6.0.0", objects: [] }) }]
+      };
+      designs.unshift(newDesign);
+      localStorage.setItem(STORAGE_KEY_DESIGNS, JSON.stringify(designs));
+      return newDesign as unknown as T;
+    }
+    if (path.startsWith("/api/designs/") && path.endsWith("/fill")) {
+      const id = path.split("/")[3];
+      const designs = JSON.parse(localStorage.getItem(STORAGE_KEY_DESIGNS) || "[]");
+      const design = designs.find((d: any) => d.id === id);
+      return design as unknown as T;
+    }
+  }
 
-  return (
-    <EditorContext.Provider value={contextValue}>
-      {hostNav}
-      <Editor />
-    </EditorContext.Provider>
-  );
+  // Xử lý các endpoint PUT
+  if (method === "PUT" && path.match(/^\/api\/designs\/[^/]+$/)) {
+    const id = path.split("/")[3];
+    const designs = JSON.parse(localStorage.getItem(STORAGE_KEY_DESIGNS) || "[]");
+    const index = designs.findIndex((d: any) => d.id === id);
+    if (index !== -1) {
+      const payload = body as any;
+      designs[index] = {
+        ...designs[index],
+        ...payload,
+        updated_at: new Date().toISOString()
+      };
+      localStorage.setItem(STORAGE_KEY_DESIGNS, JSON.stringify(designs));
+      return designs[index] as unknown as T;
+    }
+  }
+
+  // Xử lý các endpoint DELETE
+  if (method === "DELETE" && path.match(/^\/api\/designs\/[^/]+$/)) {
+    const id = path.split("/")[3];
+    let designs = JSON.parse(localStorage.getItem(STORAGE_KEY_DESIGNS) || "[]");
+    designs = designs.filter((d: any) => d.id !== id);
+    localStorage.setItem(STORAGE_KEY_DESIGNS, JSON.stringify(designs));
+    return { success: true } as unknown as T;
+  }
+
+  return {} as unknown as T;
 }
