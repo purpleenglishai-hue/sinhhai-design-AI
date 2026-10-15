@@ -75,7 +75,6 @@ export async function loadCustomFont(font: CustomFont) {
 export async function importCustomFont(file: File): Promise<CustomFont> {
   if (!/\.(ttf|otf|woff2?)$/i.test(file.name)) throw new Error("Choose a TTF, OTF, WOFF or WOFF2 font file.");
   if (!file.size || file.size > 10 * 1024 * 1024) throw new Error("Fonts must be between 1 byte and 10 MB.");
-  // Decode before saving, so a broken font never enters the shared library.
   let face: FontFace;
   try {
     face = await new FontFace("Custom-preview", await file.arrayBuffer()).load();
@@ -100,12 +99,15 @@ export function useFonts() {
   useEffect(() => {
     (async () => {
       try {
-        const [, fonts] = await Promise.all([loadFonts(), api<CustomFont[]>("GET", "/api/fonts")]);
-        // ponytail: preload the library; load by design if large font libraries slow startup.
-        // A font that fails to decode is left out rather than blocking the app:
-        // the API only checks the file signature, so a corrupt upload can get in.
-        const loaded = await Promise.allSettled(fonts.map(loadCustomFont));
-        setCustomFonts(fonts.filter((_, i) => loaded[i].status === "fulfilled"));
+        await loadFonts();
+        try {
+          const fonts = await api<CustomFont[]>("GET", "/api/fonts");
+          const loaded = await Promise.allSettled(fonts.map(loadCustomFont));
+          setCustomFonts(fonts.filter((_, i) => loaded[i].status === "fulfilled"));
+        } catch {
+          // Bỏ qua lỗi nếu API custom fonts chưa sẵn sàng trên môi trường tĩnh
+          setCustomFonts([]);
+        }
       } catch {
         setFontsError("Could not load the fonts. Reload to try again.");
       } finally {
