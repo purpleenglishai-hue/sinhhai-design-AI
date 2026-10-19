@@ -1,15 +1,16 @@
-export async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
-  const STORAGE_KEY = "sinhhai_designs_data";
-  const FONTS_STORAGE_KEY = "sinhhai_custom_fonts";
+import { storage } from "./lib/firebase";
+import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
 
-  // Hàm đọc dữ liệu localStorage
-  const getStoredData = () => {
+export async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const STORAGE_KEY = "sinhhai_firebase_designs";
+
+  const getStoredDesigns = () => {
     try {
       const data = localStorage.getItem(STORAGE_KEY);
       return data ? JSON.parse(data) : [
         {
           id: 1,
-          name: "Mẫu thiết kế AI đầu tiên",
+          name: "Mẫu thiết kế AI trên Sinhhai",
           width: 1080,
           height: 1080,
           canvas_json: JSON.stringify({ version: "6.0.0", objects: [] }),
@@ -23,17 +24,16 @@ export async function api<T>(method: string, path: string, body?: unknown): Prom
     }
   };
 
-  const saveStoredData = (data: unknown) => {
+  const saveStoredDesigns = (data: unknown) => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
   };
 
-  // Giả lập phản hồi cho API Designs
   if (path === "/api/designs" || path.startsWith("/api/designs?")) {
     if (method === "GET") {
-      return getStoredData() as T;
+      return getStoredDesigns() as T;
     }
     if (method === "POST") {
-      const designs = getStoredData();
+      const designs = getStoredDesigns();
       const newDesign = {
         id: Date.now(),
         name: (body as any)?.name || "Bản thiết kế mới",
@@ -45,7 +45,7 @@ export async function api<T>(method: string, path: string, body?: unknown): Prom
         updated_at: new Date().toISOString()
       };
       designs.unshift(newDesign);
-      saveStoredData(designs);
+      saveStoredDesigns(designs);
       return newDesign as T;
     }
   }
@@ -53,7 +53,7 @@ export async function api<T>(method: string, path: string, body?: unknown): Prom
   const designMatch = path.match(/^\/api\/designs\/(\d+)$/);
   if (designMatch) {
     const id = Number(designMatch[1]);
-    let designs = getStoredData();
+    let designs = getStoredDesigns();
     
     if (method === "GET") {
       const found = designs.find((d: any) => d.id === id) || designs[0];
@@ -62,46 +62,48 @@ export async function api<T>(method: string, path: string, body?: unknown): Prom
     if (method === "PUT") {
       designs = designs.map((d: any) => {
         if (d.id === id) {
-          return {
-            ...d,
-            ...(body as object),
-            updated_at: new Date().toISOString()
-          };
+          return { ...d, ...(body as object), updated_at: new Date().toISOString() };
         }
         return d;
       });
-      saveStoredData(designs);
+      saveStoredDesigns(designs);
       return { success: true, ...(body as object) } as T;
     }
     if (method === "DELETE") {
       designs = designs.filter((d: any) => d.id !== id);
-      saveStoredData(designs);
+      saveStoredDesigns(designs);
       return { success: true } as T;
     }
   }
 
-  if (path === "/api/fonts") {
-    if (method === "GET") {
-      try {
-        const fonts = localStorage.getItem(FONTS_STORAGE_KEY);
-        return (fonts ? JSON.parse(fonts) : []) as T;
-      } catch {
-        return [] as T;
+  // Tải tệp lên Firebase Storage khi người dùng upload ảnh hoặc font
+  if (path.includes("/api/fonts") || path.includes("/api/upload")) {
+    if (method === "POST" && body instanceof FormData) {
+      const file = body.get("file") as File;
+      if (file) {
+        const storageRef = ref(storage, `sinhhai-studio/${Date.now()}_${file.name}`);
+        const snapshot = await uploadBytes(storageRef, file);
+        const downloadURL = await getDownloadURL(snapshot.ref);
+        return { family: file.name, url: downloadURL } as T;
       }
     }
-    if (method === "POST") {
-      return { family: "Custom-Font", url: "" } as T;
+    if (method === "GET") {
+      return [] as T;
     }
   }
 
-  // Luồng gọi fetch gốc cho các trường hợp khác
   const opts: RequestInit = { method, headers: {} };
-  if (body) {
+  if (body && !(body instanceof FormData)) {
     (opts.headers as Record<string, string>)["Content-Type"] = "application/json";
     opts.body = JSON.stringify(body);
   }
-  const r = await fetch(path, opts);
-  const data = await r.json();
-  if (!r.ok) throw new Error(data.error || "Request failed");
-  return data as T;
+  
+  try {
+    const r = await fetch(path, opts);
+    if (r.ok) return await r.json() as T;
+  } catch {
+    // Bỏ qua lỗi mạng tĩnh
+  }
+
+  return {} as T;
 }
