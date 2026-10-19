@@ -66,17 +66,21 @@ export function LeftSidebar() {
     setActiveSection((prev) => (prev === key ? null : key));
   };
 
+  // Đọc file ảnh trực tiếp qua FileReader để chạy mượt trên môi trường tĩnh
   const handleImageUpload = useCallback(
     async (files: FileList | null) => {
       if (!files || files.length === 0) return;
       setUploading(true);
       try {
         for (const file of Array.from(files)) {
-          const form = new FormData();
-          form.append("file", file);
-          const resp = await fetch("/api/uploads", { method: "POST", body: form });
-          const data = await resp.json();
-          if (data.url) addImage(data.url);
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            const result = e.target?.result as string;
+            if (result) {
+              addImage(result);
+            }
+          };
+          reader.readAsDataURL(file);
         }
       } catch (e) {
         console.error("Upload failed:", e);
@@ -90,15 +94,14 @@ export function LeftSidebar() {
   const handleBgUpload = useCallback(
     async (files: FileList | null) => {
       if (!files || files.length === 0) return;
-      const form = new FormData();
-      form.append("file", files[0]);
-      try {
-        const resp = await fetch("/api/uploads", { method: "POST", body: form });
-        const data = await resp.json();
-        if (data.url) setBackground("image", data.url);
-      } catch (e) {
-        console.error("Bg upload failed:", e);
-      }
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const result = e.target?.result as string;
+        if (result) {
+          setBackground("image", result);
+        }
+      };
+      reader.readAsDataURL(files[0]);
     },
     [setBackground]
   );
