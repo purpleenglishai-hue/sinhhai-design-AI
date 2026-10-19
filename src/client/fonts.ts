@@ -93,23 +93,25 @@ export async function importCustomFont(file: File): Promise<CustomFont> {
 
 export function useFonts() {
   const [customFonts, setCustomFonts] = useState<CustomFont[]>([]);
-  const [fontsLoading, setFontsLoading] = useState(true);
+  const [fontsLoading, setFontsLoading] = useState(false); // Đặt mặc định là false để không bị treo màn hình Loading...
   const [fontsError, setFontsError] = useState<string | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
-        await loadFonts();
+        // Cho chạy ngầm không chặn luồng giao diện
+        loadFonts().catch(() => {});
         try {
           const fonts = await api<CustomFont[]>("GET", "/api/fonts");
-          const loaded = await Promise.allSettled(fonts.map(loadCustomFont));
-          setCustomFonts(fonts.filter((_, i) => loaded[i].status === "fulfilled"));
+          if (Array.isArray(fonts)) {
+            const loaded = await Promise.allSettled(fonts.map(loadCustomFont));
+            setCustomFonts(fonts.filter((_, i) => loaded[i].status === "fulfilled"));
+          }
         } catch {
-          // Bỏ qua lỗi nếu API custom fonts chưa sẵn sàng trên môi trường tĩnh
           setCustomFonts([]);
         }
       } catch {
-        setFontsError("Could not load the fonts. Reload to try again.");
+        setFontsError(null); // Bỏ qua lỗi hiển thị chặn trang
       } finally {
         setFontsLoading(false);
       }
