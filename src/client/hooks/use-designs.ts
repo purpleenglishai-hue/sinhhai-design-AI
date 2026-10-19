@@ -21,7 +21,7 @@ export function useDesigns(
     try {
       return localStorage.getItem("opendesign:auto-save") === "true";
     } catch {
-      return false; // storage blocked (private window, sandboxed iframe)
+      return false;
     }
   });
   const activeIdRef = useRef<string | null>(null);
@@ -29,27 +29,30 @@ export function useDesigns(
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const designLoadRef = useRef(0);
   const saveQueueRef = useRef<Promise<void>>(Promise.resolve());
+
   const updatePages = useCallback((next: Page[] | ((pages: Page[]) => Page[])) => {
     const updated = typeof next === "function" ? next(pagesRef.current) : next;
     pagesRef.current = updated;
     setPages(updated);
   }, []);
 
-  // Keep activePageIdRef in sync
   useEffect(() => {
     activePageIdRef.current = activePageId;
   }, [activePageId]);
 
-  // Load designs + templates on mount
+  // Load designs + templates từ localStorage / API
   useEffect(() => {
     (async () => {
       try {
-        const [d, t] = await Promise.all([
-          api<Design[]>("GET", "/api/designs"),
-          api<Template[]>("GET", "/api/templates"),
-        ]);
-        setDesigns(d);
-        setTemplates(t);
+        const stored = localStorage.getItem("sinhhai_firebase_designs");
+        if (stored) {
+          const parsed = JSON.parse(stored);
+          setDesigns(parsed);
+        } else {
+          const d = await api<Design[]>("GET", "/api/designs");
+          setDesigns(d);
+        }
+        setTemplates([]);
       } catch (e) {
         console.error("Failed to load data:", e);
       } finally {
@@ -67,39 +70,25 @@ export function useDesigns(
     setSaving(true);
     if (activeIdRef.current === designId) setSaveStatus("saving");
     try {
-      // Snapshot the active design before awaiting; navigation may switch canvases mid-save.
-      const snapshots = pagesRef.current
-        .filter((page) => page.design_id === designId)
-        .map((page) => ({ page, json: getCanvasJSONForPage(page.id) }))
-        .filter(({ json }) => json && json !== "{}");
-      for (const { page, json } of snapshots) {
-        if (!pagesRef.current.some((current) => current.id === page.id)) continue;
-        try {
-          const updatedPage = await api<Page>("PUT", `/api/pages/${page.id}`, { canvas_json: json });
-          updatePages((prev) => prev.map((p) => (p.id === updatedPage.id ? updatedPage : p)));
-        } catch (e) {
-          // A page deleted while this save was in flight is already safely gone.
-          if (!(e instanceof Error && e.message === "Not found")) throw e;
+      const currentPages = pagesRef.current;
+      const updatedDesigns = designs.map((d) => {
+        if (d.id === designId) {
+          const firstPage = currentPages.find((p) => p.design_id === designId);
+          return {
+            ...d,
+            width,
+            height,
+            canvas_json: firstPage ? getCanvasJSONForPage(firstPage.id) || firstPage.canvas_json : d.canvas_json,
+            updated_at: new Date().toISOString()
+          };
         }
-      }
-      // Also update design's canvas_json with first page for backwards compat
-      const firstPage = activeIdRef.current === designId
-        ? pagesRef.current.find((page) => page.design_id === designId)
-        : undefined;
-      const firstSavedPage = firstPage
-        ? snapshots.find(({ page }) => page.id === firstPage.id) ?? snapshots[0]
-        : snapshots[0];
-      const firstPageJson = firstSavedPage?.json || firstSavedPage?.page.canvas_json || firstPage?.canvas_json || "{}";
-      // The frame is part of the design: without it a resized design reopens
-      // at its old dimensions with artwork scaled for the new ones.
-      const updated = await api<Design>("PUT", `/api/designs/${designId}`, {
-        canvas_json: firstPageJson,
-        width,
-        height,
+        return d;
       });
-      setDesigns((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
+      setDesigns(updatedDesigns);
+      localStorage.setItem("sinhhai_firebase_designs", JSON.stringify(updatedDesigns));
       if (activeIdRef.current === designId) {
-        setActiveDesign(updated);
+        const updatedActive = updatedDesigns.find(d => d.id === designId);
+        if (updatedActive) setActiveDesign(updatedActive);
         setSaveStatus("saved");
       }
     } catch (e) {
@@ -108,10 +97,8 @@ export function useDesigns(
     } finally {
       setSaving(false);
     }
-  }, [getCanvasJSONForPage, getCanvasSize, updatePages]);
+  }, [getCanvasJSONForPage, getCanvasSize, designs]);
 
-  // One save at a time. Two overlapping saves can land their page writes out
-  // of order, and the older snapshot would overwrite the newer one.
   const saveDesign = useCallback(() => {
     const run = saveQueueRef.current.then(saveNow);
     saveQueueRef.current = run;
@@ -120,58 +107,95 @@ export function useDesigns(
 
   const createDesign = useCallback(async (): Promise<string | undefined> => {
     try {
-      const d = await api<Design>("POST", "/api/designs", {
+      const newId = String(Date.now());
+      const d: Design = {
+        id: newId,
         name: "Untitled Design",
-        canvas_json: "{}",
-      });
-      setDesigns((prev) => [d, ...prev]);
+        width: 1080,
+        height: 1080,
+        canvas_json: JSON.stringify({ version: "6.0.0", objects: [] }),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      const updated = [d, ...designs];
+      setDesigns(updated);
+      localStorage.setItem("sinhhai_firebase_designs", JSON.stringify(updated));
       return d.id;
     } catch (e) {
       console.error("Failed to create design:", e);
     }
-  }, []);
+  }, [designs]);
 
   const createFromTemplate = useCallback(async (template: Template): Promise<string | undefined> => {
     try {
-      const d = await api<Design>("POST", "/api/designs", {
+      const newId = String(Date.now());
+      const d: Design = {
+        id: newId,
         name: template.name,
-        canvas_json: template.canvas_json,
-        width: template.width,
-        height: template.height,
-      });
-      setDesigns((prev) => [d, ...prev]);
+        width: template.width || 1080,
+        height: template.height || 1080,
+        canvas_json: template.canvas_json || JSON.stringify({ version: "6.0.0", objects: [] }),
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString()
+      };
+      const updated = [d, ...designs];
+      setDesigns(updated);
+      localStorage.setItem("sinhhai_firebase_designs", JSON.stringify(updated));
       return d.id;
     } catch (e) {
       console.error("Failed to create from template:", e);
     }
-  }, []);
+  }, [designs]);
 
   const loadDesign = useCallback(
     async (id: string) => {
       const request = ++designLoadRef.current;
       try {
-        const d = await api<DesignWithPages>("GET", `/api/designs/${id}`);
-        if (request !== designLoadRef.current) return;
-        updatePages(d.pages);
-        setActiveDesign(d);
-        activeIdRef.current = d.id;
-        setLoadedDesignId(d.id);
-        if (d.pages.length > 0) {
-          setActivePageId(d.pages[0].id);
-        } else {
-          setActivePageId(null);
+        let found = designs.find((d) => d.id === id);
+        if (!found) {
+          const stored = localStorage.getItem("sinhhai_firebase_designs");
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            found = parsed.find((d: Design) => d.id === id);
+          }
         }
+        if (!found) {
+          found = {
+            id,
+            name: "Untitled Design",
+            width: 1080,
+            height: 1080,
+            canvas_json: JSON.stringify({ version: "6.0.0", objects: [] }),
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString()
+          };
+        }
+        if (request !== designLoadRef.current) return;
+        
+        const initialPage: Page = {
+          id: `page_${id}_1`,
+          design_id: id,
+          sort_order: 0,
+          canvas_json: found.canvas_json || JSON.stringify({ version: "6.0.0", objects: [] })
+        };
+
+        updatePages([initialPage]);
+        setActiveDesign(found);
+        activeIdRef.current = found.id;
+        setLoadedDesignId(found.id);
+        setActivePageId(initialPage.id);
       } catch (e) {
         console.error("Failed to load design:", e);
       }
     },
-    [updatePages]
+    [designs, updatePages]
   );
 
   const deleteDesign = useCallback(async (id: string) => {
     try {
-      await api<{ ok: boolean }>("DELETE", `/api/designs/${id}`);
-      setDesigns((prev) => prev.filter((d) => d.id !== id));
+      const updated = designs.filter((d) => d.id !== id);
+      setDesigns(updated);
+      localStorage.setItem("sinhhai_firebase_designs", JSON.stringify(updated));
       if (activeIdRef.current === id) {
         if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
         saveTimerRef.current = null;
@@ -183,57 +207,55 @@ export function useDesigns(
     } catch (e) {
       console.error("Failed to delete:", e);
     }
-  }, [updatePages]);
+  }, [designs, updatePages]);
 
   const renameDesign = useCallback(async (id: string, name: string) => {
     try {
-      const updated = await api<Design>("PUT", `/api/designs/${id}`, { name });
-      setDesigns((prev) => prev.map((d) => (d.id === updated.id ? updated : d)));
-      if (activeIdRef.current === id) setActiveDesign(updated);
+      const updated = designs.map((d) => (d.id === id ? { ...d, name } : d));
+      setDesigns(updated);
+      localStorage.setItem("sinhhai_firebase_designs", JSON.stringify(updated));
+      if (activeIdRef.current === id) {
+        const found = updated.find(d => d.id === id);
+        if (found) setActiveDesign(found);
+      }
     } catch (e) {
       console.error("Failed to rename:", e);
     }
-  }, []);
+  }, [designs]);
 
   // ── Page management ─────────────────────────────────────────────────
 
-  const addPage = useCallback(async (afterPageId?: string) => {
+  const addPage = useCallback(async (_afterPageId?: string) => {
     if (!activeIdRef.current) return;
     try {
-      const body: Record<string, unknown> = {};
-      if (afterPageId) {
-        const afterPage = pages.find((p) => p.id === afterPageId);
-        if (afterPage) body.after_sort_order = afterPage.sort_order;
-      }
-      const page = await api<Page>("POST", `/api/designs/${activeIdRef.current}/pages`, body);
-      // Re-fetch all pages to get correct sort_order after shifts
-      const d = await api<DesignWithPages>("GET", `/api/designs/${activeIdRef.current}`);
-      updatePages(d.pages);
-      setActivePageId(page.id);
+      const newPageId = `page_${activeIdRef.current}_${Date.now()}`;
+      const newPage: Page = {
+        id: newPageId,
+        design_id: activeIdRef.current,
+        sort_order: pagesRef.current.length,
+        canvas_json: JSON.stringify({ version: "6.0.0", objects: [] })
+      };
+      updatePages((prev) => [...prev, newPage]);
+      setActivePageId(newPageId);
     } catch (e) {
       console.error("Failed to add page:", e);
     }
-  }, [pages, updatePages]);
+  }, [updatePages]);
 
   const duplicatePage = useCallback(
     async (pageId: string) => {
-      // Save current canvas state for the page being duplicated
-      const json = getCanvasJSONForPage(pageId);
-      if (json && json !== "{}") {
-        try {
-          await api<Page>("PUT", `/api/pages/${pageId}`, { canvas_json: json });
-        } catch {
-          // best effort
-        }
-      }
       try {
-        const page = await api<Page>("POST", `/api/pages/${pageId}/duplicate`, {});
-        // Re-fetch all pages to get correct sort_order
-        if (activeIdRef.current) {
-          const d = await api<DesignWithPages>("GET", `/api/designs/${activeIdRef.current}`);
-          updatePages(d.pages);
-        }
-        setActivePageId(page.id);
+        const sourcePage = pagesRef.current.find(p => p.id === pageId);
+        const currentJson = getCanvasJSONForPage(pageId) || sourcePage?.canvas_json || "{}";
+        const newPageId = `page_${activeIdRef.current}_${Date.now()}`;
+        const newPage: Page = {
+          id: newPageId,
+          design_id: activeIdRef.current || "1",
+          sort_order: pagesRef.current.length,
+          canvas_json: currentJson
+        };
+        updatePages((prev) => [...prev, newPage]);
+        setActivePageId(newPageId);
       } catch (e) {
         console.error("Failed to duplicate page:", e);
       }
@@ -244,8 +266,8 @@ export function useDesigns(
   const deletePage = useCallback(
     async (pageId: string) => {
       try {
-        await api<{ ok: boolean }>("DELETE", `/api/pages/${pageId}`);
         const remaining = pagesRef.current.filter((p) => p.id !== pageId);
+        if (remaining.length === 0) return; // Không xóa hết trang cuối cùng
         updatePages(remaining);
         if (activePageIdRef.current === pageId && remaining.length > 0) {
           setActivePageId(remaining[0].id);
@@ -254,26 +276,23 @@ export function useDesigns(
         console.error("Failed to delete page:", e);
       }
     },
-    [pages, updatePages]
+    [updatePages]
   );
 
   const renamePage = useCallback(async (pageId: string, title: string) => {
     try {
-      const updated = await api<Page>("PUT", `/api/pages/${pageId}`, { title });
-      updatePages((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      updatePages((prev) => prev.map((p) => (p.id === pageId ? { ...p, title } : p)));
     } catch (e) {
       console.error("Failed to rename page:", e);
     }
   }, [updatePages]);
 
-  // switchToPage is now just scrolling + activating — handled by CanvasArea/PagesBar
   const switchToPage = useCallback((pageId: string) => {
     setActivePageId(pageId);
   }, []);
 
   const activePage = pages.find((p) => p.id === activePageId) ?? null;
 
-  // Auto-save debounced
   const scheduleSave = useCallback(() => {
     if (!autoSave || !activeIdRef.current) return;
     if (saveTimerRef.current) clearTimeout(saveTimerRef.current);
@@ -288,7 +307,7 @@ export function useDesigns(
     try {
       localStorage.setItem("opendesign:auto-save", String(enabled));
     } catch {
-      // storage blocked: the choice lasts for this session only
+      // ignore
     }
     setAutoSaveState(enabled);
     if (!enabled && saveTimerRef.current) {
