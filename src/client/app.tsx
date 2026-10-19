@@ -95,11 +95,28 @@ export function App() {
       <Home
         designs={designState.designs}
         templates={designState.templates}
-        navigate={navigate}
-        createDesign={designState.createDesign}
+        navigate={(url) => {
+          navigate(url);
+          window.location.href = url;
+        }}
+        createDesign={async (template) => {
+          const newD = await designState.createDesign(template);
+          if (newD && newD.id) {
+            navigate(`/design/${newD.id}`);
+            window.location.href = `/design/${newD.id}`;
+          }
+          return newD;
+        }}
         deleteDesign={designState.deleteDesign}
         renameDesign={designState.renameDesign}
-        createFromTemplate={designState.createFromTemplate}
+        createFromTemplate={async (template) => {
+          const newD = await designState.createFromTemplate(template);
+          if (newD && newD.id) {
+            navigate(`/design/${newD.id}`);
+            window.location.href = `/design/${newD.id}`;
+          }
+          return newD;
+        }}
       />
       </>
     );
