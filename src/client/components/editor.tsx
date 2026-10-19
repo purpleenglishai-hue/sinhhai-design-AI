@@ -1,20 +1,15 @@
-import { CanvasArea } from "./canvas-area";
 import { Toolbar } from "./toolbar";
-import { LeftSidebar } from "./left-sidebar";
-import { RightSidebar } from "./right-sidebar";
-import { PagesBar } from "./pages-bar";
+import { PhotopeaEditor } from "./PhotopeaEditor";
 
 export function Editor() {
   return (
-    <div class="flex flex-col h-full w-full">
+    <div class="flex flex-col h-screen w-screen overflow-hidden bg-zinc-900">
+      {/* Thanh công cụ tiêu đề phía trên */}
       <Toolbar />
-      <div class="flex flex-1 min-h-0">
-        <LeftSidebar />
-        <div class="flex-1 flex flex-col min-w-0">
-          <CanvasArea />
-          <PagesBar />
-        </div>
-        <RightSidebar />
+      
+      {/* Vùng không gian làm việc chính nhúng Photopea Studio Pro */}
+      <div class="flex-1 flex min-h-0 w-full h-full relative">
+        <PhotopeaEditor />
       </div>
     </div>
   );
