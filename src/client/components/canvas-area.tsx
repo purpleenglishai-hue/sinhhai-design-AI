@@ -23,7 +23,7 @@ export function CanvasArea() {
     const fit = Math.min(availW / canvasWidth, 1);
     setFitScale(fit);
     setZoomRaw(0.58);
-  }, [canvasWidth, canvasHeight]);
+  }, [canvasWidth, canvasHeight, setFitScale, setZoomRaw]);
 
   // Recalculate on resize
   useEffect(() => {
@@ -37,7 +37,7 @@ export function CanvasArea() {
     });
     obs.observe(wrapper);
     return () => obs.disconnect();
-  }, [canvasWidth, canvasHeight]);
+  }, [canvasWidth, canvasHeight, setFitScale]);
 
   // Cmd+wheel zoom towards mouse position
   const zoomRef = useRef(zoom);
@@ -165,9 +165,9 @@ export function CanvasArea() {
                 ) : (
                   <span
                     class="text-[11px] text-zinc-400 font-medium cursor-pointer hover:text-zinc-600 transition-colors"
-                    onClick={() => startRename(page.id, page.title)}
+                    onClick={() => startRename(page.id, page.title || "Page")}
                   >
-                    {page.title}
+                    {page.title || "Page"}
                   </span>
                 )}
               </div>
